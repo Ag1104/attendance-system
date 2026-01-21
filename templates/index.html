@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Office Sign In</title>
+
+<style>
+body {
+  font-family: "Segoe UI", sans-serif;
+  background: linear-gradient(135deg, #ffecd2, #fcb69f);
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.container {
+  background: white;
+  padding: 35px;
+  border-radius: 15px;
+  width: 360px;
+  text-align: center;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+}
+
+h1 { color: #b45309; }
+
+select, button {
+  width: 100%;
+  padding: 12px;
+  font-size: 1rem;
+  border-radius: 8px;
+  margin-top: 15px;
+}
+
+button {
+  background: #f59e0b;
+  color: white;
+  border: none;
+  cursor: pointer;
+}
+
+button:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+#locationStatus {
+  margin-top: 15px;
+  font-weight: bold;
+}
+
+#staffNameDisplay {
+  margin-top: 10px;
+  font-weight: bold;
+  color: blue;
+}
+</style>
+</head>
+
+<body>
+<div class="container">
+  <h1>Office Sign In</h1>
+
+  <p>You are welcome to work today,<br>
+     <strong id="today"></strong>
+  </p>
+
+  <div id="locationStatus">📍 Checking location...</div>
+
+  <select id="staff_id" onchange="onStaffChange()">
+    <option value="">-- Select Staff ID --</option>
+  </select>
+
+  <p id="staffNameDisplay"></p>
+
+  <button id="signinBtn" onclick="signIn()" disabled>Sign In</button>
+
+  <p id="message"></p>
+</div>
+
+<script>
+const OFFICE_LATITUDE = 6.43090;
+const OFFICE_LONGITUDE = 3.43615;
+const ALLOWED_RADIUS_METERS = 30;
+const R = 6371000;
+
+document.getElementById("today").innerText = new Date().toDateString();
+
+let userLat, userLon;
+let staffMap = {};
+let locationOk = false;
+let deviceSigned = false;
+
+// -------- Load staff list from backend --------
+fetch("/staff")
+.then(res => res.json())
+.then(data => {
+    staffMap = data;
+    const select = document.getElementById("staff_id");
+    select.innerHTML = '<option value="">-- Select Staff ID --</option>';
+    for (let id in data) {
+        select.innerHTML += `<option value="${id}">${id}</option>`; // Staff ID in dropdown
+    }
+    disableSignedStaff();
+});
+
+// -------- Disable already signed staff --------
+async function disableSignedStaff() {
+    const res = await fetch("/signed_today");
+    const signed = await res.json();
+    const staffSelect = document.getElementById("staff_id");
+
+    for (let opt of staffSelect.options) {
+        if (signed.includes(opt.value)) {
+            opt.disabled = true;
+            opt.text += " (Signed in)";
+        }
+    }
+}
+
+// -------- Location check --------
+function calculateDistance(lat1, lon1, lat2, lon2) {
+    const toRad = x => x * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat/2)**2 +
+              Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*
+              Math.sin(dLon/2)**2;
+    return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+}
+
+navigator.geolocation.getCurrentPosition(pos => {
+    userLat = pos.coords.latitude;
+    userLon = pos.coords.longitude;
+
+    const distance = calculateDistance(userLat, userLon, OFFICE_LATITUDE, OFFICE_LONGITUDE);
+
+    const locStatus = document.getElementById("locationStatus");
+    const signinBtn = document.getElementById("signinBtn");
+
+    if (distance <= ALLOWED_RADIUS_METERS) {
+        locStatus.innerText = `✅ Within office perimeter (${Math.round(distance)}m)`;
+        locStatus.style.color = "green";
+        locationOk = true;
+    } else {
+        locStatus.innerText = `❌ Outside perimeter (${Math.round(distance)}m)`;
+        locStatus.style.color = "red";
+        locationOk = false;
+    }
+
+    // Enable sign-in button if staff selected and location OK and device not signed
+    const staffId = document.getElementById("staff_id").value;
+    signinBtn.disabled = !(staffId && locationOk && !deviceSigned);
+});
+
+// -------- Staff selection --------
+function onStaffChange() {
+    const staffId = document.getElementById("staff_id").value;
+    const nameDisplay = document.getElementById("staffNameDisplay");
+    const signinBtn = document.getElementById("signinBtn");
+
+    if (staffId && staffMap[staffId]) {
+        nameDisplay.innerText = `Staff Name: ${staffMap[staffId]}`;
+    } else {
+        nameDisplay.innerText = "";
+    }
+
+    signinBtn.disabled = !(staffId && locationOk && !deviceSigned);
+}
+
+// -------- Sign-in function --------
+function signIn() {
+    const staffId = document.getElementById("staff_id").value;
+    if (!staffId) return;
+
+    fetch("/signin", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            staff_id: staffId,
+            latitude: userLat,
+            longitude: userLon
+        })
+    })
+    .then(r => r.json())
+    .then(data => {
+        const messageEl = document.getElementById("message");
+        const signinBtn = document.getElementById("signinBtn");
+        const staffSelect = document.getElementById("staff_id");
+
+        if (data.time) {
+            messageEl.innerText = `✅ Signed in at ${data.time} (${data.status})`;
+            messageEl.style.color = "green";
+
+            // Lock device
+            deviceSigned = true;
+            signinBtn.disabled = true;
+            staffSelect.disabled = true;
+
+            // Mark staff ID as signed in
+            const selectedOption = staffSelect.querySelector(`option[value="${staffId}"]`);
+            if (selectedOption) {
+                selectedOption.disabled = true;
+                selectedOption.text += " (Signed in)";
+            }
+        } else {
+            messageEl.innerText = data.message;
+            messageEl.style.color = "red";
+        }
+    });
+}
+</script>
+</body>
+</html>
