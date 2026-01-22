@@ -1,31 +1,33 @@
-from flask import Flask, request, jsonify, render_template, session, redirect, url_for, send_file
+from flask import Flask, request, jsonify, render_template, session, redirect, send_file, url_for
 import secrets
-from zoneinfo import ZoneInfo
 from datetime import datetime, date, time
+from zoneinfo import ZoneInfo
 import csv
 import os
 import math
+import traceback
 
 app = Flask(__name__)
-
-app.secret_key = secrets.token_hex(16)
-IMT_PASSWORD = "0123456789"
+app.config["DEBUG"] = True
 
 # ---------------- CONFIG ----------------
-OFFICE_LATITUDE = 6.43090
-OFFICE_LONGITUDE = 3.43615
-ALLOWED_RADIUS_METERS = 30  # perimeter (meters)
+OFFICE_LATITUDE = 6.430807
+OFFICE_LONGITUDE = 3.436191
+ALLOWED_RADIUS_METERS = 30
 
-SIGNIN_START_TIME = time(5, 0, 0)  # 5:00 AM
-ONTIME_END_TIME = time(8, 30, 0)  # 8:30 AM
+SIGNIN_START_TIME = time(5, 0, 0)
+ONTIME_END_TIME = time(8, 30, 0)
+#LOCAL_TZ = ZoneInfo("Africa/Lagos")
 
 DATA_FOLDER = "attendance_records"
 DATA_FILE = os.path.join(DATA_FOLDER, "attendance.csv")
-STAFF_FILE = "staff_list.csv"  # CSV with staff_id,staff_name
+STAFF_FILE = "staff_list.csv"
+
+app.secret_key = secrets.token_hex(16)
+IMT_PASSWORD = "hr123"  # simple HR dashboard password
 
 if not os.path.exists(DATA_FOLDER):
     os.makedirs(DATA_FOLDER)
-
 
 # ---------------- UTILITIES ----------------
 def ensure_csv():
@@ -37,18 +39,7 @@ def ensure_csv():
             )
             writer.writeheader()
 
-
-def calculate_distance(lat1, lon1, lat2, lon2):
-    R = 6371000
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    d_phi = math.radians(lat2 - lat1)
-    d_lambda = math.radians(lon2 - lon1)
-    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
-    return R * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
-
-
 def load_staff():
-    """Load staff_id -> staff_name from CSV"""
     staff = {}
     if os.path.exists(STAFF_FILE):
         with open(STAFF_FILE, newline="", encoding="utf-8") as f:
@@ -57,15 +48,99 @@ def load_staff():
                 staff[row["staff_id"].strip().upper()] = row["staff_name"].strip()
     return staff
 
-
-def get_user_ip():
-    if "X-Forwarded-For" in request.headers:
-        return request.headers["X-Forwarded-For"].split(",")[0].strip()
-    return request.remote_addr
-
+def calculate_distance(lat1, lon1, lat2, lon2):
+    R = 6371000
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lon2 - lon1)
+    a = math.sin(d_phi / 2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(d_lambda/2)**2
+    return R * (2 * math.atan2(math.sqrt(a), math.sqrt(1-a)))
 
 # ---------------- ROUTES ----------------
+@app.route("/")
+def index():
+    return render_template("index.html")
 
+@app.route("/staff")
+def staff():
+    try:
+        staff_map = load_staff()
+        return jsonify(staff_map)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/signed_today")
+def signed_today():
+    try:
+        ensure_csv()
+        today = date.today().isoformat()
+        signed_ids = []
+
+        with open(DATA_FILE, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row["date"] == today:
+                    signed_ids.append(row["staff_id"])
+        return jsonify(signed_ids)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/signin", methods=["POST"])
+def signin():
+    try:
+        ensure_csv()
+        data = request.get_json(silent=True) or {}
+        staff_id = data.get("staff_id", "").strip().upper()
+        lat = data.get("latitude")
+        lon = data.get("longitude")
+
+        user_ip = request.headers.get("X-Forwarded-For", request.remote_addr).split(",")[0].strip()
+
+        if not staff_id:
+            return jsonify({"message": "Staff ID is required"}), 400
+
+        # Location check
+        distance = calculate_distance(lat, lon, OFFICE_LATITUDE, OFFICE_LONGITUDE)
+        if distance > ALLOWED_RADIUS_METERS:
+            return jsonify({"message": f"You are outside the office perimeter ({int(distance)}m away)"}), 403
+
+        now = datetime.now(tz=LOCAL_TZ)
+        today = now.date().isoformat()
+        current_time_str = now.strftime("%I:%M %p")
+        if now.time() < SIGNIN_START_TIME:
+            return jsonify({"message": "Sign-in has not started yet"}), 403
+        status = "ON TIME" if now.time() <= ONTIME_END_TIME else "LATE"
+
+        # Duplicate/device check
+        with open(DATA_FILE, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row["staff_id"] == staff_id and row["date"] == today:
+                    return jsonify({"message": "You have already signed in today"}), 409
+                if row["ip"] == user_ip and row["date"] == today:
+                    return jsonify({"message": "This device has already signed in today"}), 409
+
+        # Save
+        with open(DATA_FILE, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["staff_id","date","time","status","ip","distance_meters"])
+            writer.writerow({
+                "staff_id": staff_id,
+                "date": today,
+                "time": current_time_str,
+                "status": status,
+                "ip": user_ip,
+                "distance_meters": round(distance,2)
+            })
+
+        return jsonify({"message": "Sign-in successful", "time": current_time_str, "status": status})
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"message": "Internal server error", "error": str(e)}), 500
+
+# ---------------- HR DASHBOARD ----------------
 @app.route("/imt/login", methods=["GET", "POST"])
 def imt_login():
     if request.method == "POST":
@@ -78,7 +153,6 @@ def imt_login():
         return render_template("imt_login.html", error="Invalid password")
 
     return render_template("imt_login.html")
-
 
 @app.route("/imt")
 def imt_dashboard():
@@ -95,98 +169,17 @@ def imt_dashboard():
 
     return render_template("imt.html", records=records)
 
-
 @app.route("/imt/logout")
 def imt_logout():
     session.pop("imt_logged_in", None)
     return redirect("/imt/login")
 
-
-@app.route("/")
-def index():
-    ensure_csv()
-    return render_template("index.html")
-
-
-@app.route("/staff")
-def staff_list():
-    return jsonify(load_staff())
-
-
-@app.route("/signed_today")
-def signed_today():
-    ensure_csv()
-    today = date.today().isoformat()
-    signed_ids = []
-    with open(DATA_FILE, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if row["date"] == today:
-                signed_ids.append(row["staff_id"])
-    return jsonify(signed_ids)
-
-
-@app.route("/signin", methods=["POST"])
-def signin():
-    ensure_csv()
-    data = request.json
-    staff_id = data.get("staff_id", "").strip().upper()
-    lat = data.get("latitude")
-    lon = data.get("longitude")
-    user_ip = get_user_ip()
-
-    if not staff_id:
-        return jsonify({"message": "Staff ID is required"}), 400
-
 @app.route("/download_csv")
 def download_csv():
     ensure_csv()
-    return send_file(
-        DATA_FILE,
-        as_attachment=True,
-        download_name="attendance.csv"
-    )
-
-    # -------- LOCATION CHECK --------
-    distance = calculate_distance(lat, lon, OFFICE_LATITUDE, OFFICE_LONGITUDE)
-    if distance > ALLOWED_RADIUS_METERS:
-        return jsonify({"message": f"You are outside the office perimeter ({int(distance)}m away)"}), 403
-
-    now = datetime.now(LOCAL_TZ)
-    today = now.date().isoformat()
-    current_time_str = now.strftime("%I:%M %p")
-
-    if now.time() < SIGNIN_START_TIME:
-        return jsonify({"message": "Sign-in has not started yet"}), 403
-
-    status = "ON TIME" if now.time() <= ONTIME_END_TIME else "LATE"
-
-    # -------- DUPLICATE CHECKS --------
-    with open(DATA_FILE, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            # Check if this staff already signed in today
-            if row["staff_id"] == staff_id and row["date"] == today:
-                return jsonify({"message": "This staff has already signed in today"}), 409
-            # Check if this device/IP already signed in today
-            if row["ip"] == user_ip and row["date"] == today:
-                return jsonify({"message": "This device has already signed in today"}), 409
-
-    # -------- SAVE --------
-    with open(DATA_FILE, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["staff_id", "date", "time", "status", "ip", "distance_meters"])
-        writer.writerow({
-            "staff_id": staff_id,
-            "date": today,
-            "time": current_time_str,
-            "status": status,
-            "ip": user_ip,
-            "distance_meters": round(distance, 2)
-        })
-
-    return jsonify({"message": "Sign-in successful", "time": current_time_str, "status": status})
-
+    return send_file(DATA_FILE, as_attachment=True)
 
 # ---------------- RUN ----------------
 if __name__ == "__main__":
     app.run()
+
