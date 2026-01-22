@@ -35,7 +35,7 @@ def ensure_csv():
         with open(DATA_FILE, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(
                 f,
-                fieldnames=["staff_id", "date", "time", "status", "ip", "distance_meters"]
+                fieldnames=["staff_id", "date", "time", "status", "distance_meters"]
             )
             writer.writeheader()
 
@@ -47,7 +47,14 @@ def load_staff():
             for row in reader:
                 staff[row["staff_id"].strip().upper()] = row["staff_name"].strip()
     return staff
-
+def load_staff_map():
+    staff_map = {}
+    if os.path.exists(STAFF_FILE):
+        with open(STAFF_FILE, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                staff_map[row["staff_id"].strip().upper()] = row["staff_name"].strip()
+    return staff_map
 def calculate_distance(lat1, lon1, lat2, lon2):
     R = 6371000
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
@@ -101,6 +108,8 @@ def signin():
         if not staff_id:
             return jsonify({"message": "Staff ID is required"}), 400
 
+        staff_name = load_staff_map().get(staff_id, "")
+
         # Location check
         distance = calculate_distance(lat, lon, OFFICE_LATITUDE, OFFICE_LONGITUDE)
         if distance > ALLOWED_RADIUS_METERS:
@@ -124,14 +133,17 @@ def signin():
 
         # Save
         with open(DATA_FILE, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["staff_id","date","time","status","ip","distance_meters"])
+            writer = csv.DictWriter(
+                f,
+                fieldnames=["staff_id", "staff_name", "date", "time", "status", "distance_meters"]
+            )
             writer.writerow({
                 "staff_id": staff_id,
+                "staff_name": staff_name,
                 "date": today,
                 "time": current_time_str,
-                "status": status,
-                "ip": user_ip,
-                "distance_meters": round(distance,2)
+                "status": "ON TIME" if now.time() <= ONTIME_END_TIME else "LATE",
+                "distance_meters": round(distance, 2)
             })
 
         return jsonify({"message": "Sign-in successful", "time": current_time_str, "status": status})
@@ -165,8 +177,14 @@ def imt_dashboard():
     with open(DATA_FILE, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            records.append(row)
-
+            records.append({
+                "staff_id": row["staff_id"],
+                "staff_name": row["staff_name"],
+                "date": row["date"],
+                "time": row["time"],
+                "status": row["status"],
+                "distance_meters": row["distance_meter"]
+            })
     return render_template("imt.html", records=records)
 
 @app.route("/imt/logout")
@@ -181,6 +199,4 @@ def download_csv():
 
 # ---------------- RUN ----------------
 if __name__ == "__main__":
-    app.run()
-
-
+    app.run(host="0.0.0.0", port=5000, debug=True)
