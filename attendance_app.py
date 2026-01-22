@@ -1,4 +1,5 @@
-from flask import Flask, request, jsonify, render_template, send_file
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for, send_file
+import secrets
 from zoneinfo import ZoneInfo
 from datetime import datetime, date, time
 import csv
@@ -7,14 +8,16 @@ import math
 
 app = Flask(__name__)
 
+app.secret_key = secrets.token_hex(16)
+IMT_PASSWORD = "0123456789"
+
 # ---------------- CONFIG ----------------
-LOCAL_TZ = ZoneInfo("Africa/Lagos")
 OFFICE_LATITUDE = 6.43090
 OFFICE_LONGITUDE = 3.43615
-ALLOWED_RADIUS_METERS = 30   # perimeter (meters)
+ALLOWED_RADIUS_METERS = 30  # perimeter (meters)
 
-SIGNIN_START_TIME = time(5, 0, 0)     # 5:00 AM
-ONTIME_END_TIME = time(8, 30, 0)      # 8:30 AM
+SIGNIN_START_TIME = time(5, 0, 0)  # 5:00 AM
+ONTIME_END_TIME = time(8, 30, 0)  # 8:30 AM
 
 DATA_FOLDER = "attendance_records"
 DATA_FILE = os.path.join(DATA_FOLDER, "attendance.csv")
@@ -22,6 +25,7 @@ STAFF_FILE = "staff_list.csv"  # CSV with staff_id,staff_name
 
 if not os.path.exists(DATA_FOLDER):
     os.makedirs(DATA_FOLDER)
+
 
 # ---------------- UTILITIES ----------------
 def ensure_csv():
@@ -33,13 +37,15 @@ def ensure_csv():
             )
             writer.writeheader()
 
+
 def calculate_distance(lat1, lon1, lat2, lon2):
     R = 6371000
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     d_phi = math.radians(lat2 - lat1)
     d_lambda = math.radians(lon2 - lon1)
-    a = math.sin(d_phi/2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda/2)**2
+    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
     return R * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
+
 
 def load_staff():
     """Load staff_id -> staff_name from CSV"""
@@ -51,29 +57,61 @@ def load_staff():
                 staff[row["staff_id"].strip().upper()] = row["staff_name"].strip()
     return staff
 
+
 def get_user_ip():
     if "X-Forwarded-For" in request.headers:
         return request.headers["X-Forwarded-For"].split(",")[0].strip()
     return request.remote_addr
 
+
 # ---------------- ROUTES ----------------
+
+@app.route("/imt/login", methods=["GET", "POST"])
+def imt_login():
+    if request.method == "POST":
+        password = request.form.get("password")
+
+        if password == IMT_PASSWORD:
+            session["imt_logged_in"] = True
+            return redirect("/imt")
+
+        return render_template("imt_login.html", error="Invalid password")
+
+    return render_template("imt_login.html")
+
+
+@app.route("/imt")
+def imt_dashboard():
+    if not session.get("imt_logged_in"):
+        return redirect("/imt/login")
+
+    ensure_csv()
+    records = []
+
+    with open(DATA_FILE, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            records.append(row)
+
+    return render_template("imt.html", records=records)
+
+
+@app.route("/imt/logout")
+def imt_logout():
+    session.pop("imt_logged_in", None)
+    return redirect("/imt/login")
+
+
 @app.route("/")
 def index():
     ensure_csv()
     return render_template("index.html")
 
-@app.route("/download_csv")
-def download_csv():
-    ensure_csv()
-    return send_file(
-        DATA_FILE,
-        as_attachment=True,
-        download_name="attendance.csv"
-    )
 
 @app.route("/staff")
 def staff_list():
     return jsonify(load_staff())
+
 
 @app.route("/signed_today")
 def signed_today():
@@ -87,6 +125,7 @@ def signed_today():
                 signed_ids.append(row["staff_id"])
     return jsonify(signed_ids)
 
+
 @app.route("/signin", methods=["POST"])
 def signin():
     ensure_csv()
@@ -98,6 +137,15 @@ def signin():
 
     if not staff_id:
         return jsonify({"message": "Staff ID is required"}), 400
+
+@app.route("/download_csv")
+def download_csv():
+    ensure_csv()
+    return send_file(
+        DATA_FILE,
+        as_attachment=True,
+        download_name="attendance.csv"
+    )
 
     # -------- LOCATION CHECK --------
     distance = calculate_distance(lat, lon, OFFICE_LATITUDE, OFFICE_LONGITUDE)
@@ -138,8 +186,7 @@ def signin():
 
     return jsonify({"message": "Sign-in successful", "time": current_time_str, "status": status})
 
+
 # ---------------- RUN ----------------
 if __name__ == "__main__":
     app.run()
-
-
