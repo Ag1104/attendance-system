@@ -17,7 +17,7 @@ ALLOWED_RADIUS_METERS = 30
 
 SIGNIN_START_TIME = time(5, 0, 0)
 ONTIME_END_TIME = time(8, 30, 0)
-#LOCAL_TZ = ZoneInfo("Africa/Lagos")
+LOCAL_TZ = ZoneInfo("Africa/Lagos")
 
 DATA_FOLDER = "attendance_records"
 DATA_FILE = os.path.join(DATA_FOLDER, "attendance.csv")
@@ -182,4 +182,5 @@ def download_csv():
 # ---------------- RUN ----------------
 if __name__ == "__main__":
     app.run()
+
 
