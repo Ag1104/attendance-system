@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, render_template, send_file
+from zoneinfo import ZoneInfo
 from datetime import datetime, date, time
 import csv
 import os
@@ -7,6 +8,7 @@ import math
 app = Flask(__name__)
 
 # ---------------- CONFIG ----------------
+LOCAL_TZ = ZoneInfo("Africa/Lagos")
 OFFICE_LATITUDE = 6.43090
 OFFICE_LONGITUDE = 3.43615
 ALLOWED_RADIUS_METERS = 30   # perimeter (meters)
@@ -102,7 +104,7 @@ def signin():
     if distance > ALLOWED_RADIUS_METERS:
         return jsonify({"message": f"You are outside the office perimeter ({int(distance)}m away)"}), 403
 
-    now = datetime.now()
+    now = datetime.now(LOCAL_TZ)
     today = now.date().isoformat()
     current_time_str = now.strftime("%I:%M %p")
 
@@ -139,4 +141,5 @@ def signin():
 # ---------------- RUN ----------------
 if __name__ == "__main__":
     app.run()
+
 
