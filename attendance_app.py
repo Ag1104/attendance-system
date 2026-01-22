@@ -35,7 +35,7 @@ def ensure_csv():
         with open(DATA_FILE, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(
                 f,
-                fieldnames=["staff_id", "date", "time", "status", "distance_meters"]
+                fieldnames=["staff_id", "date", "time", "status", "ip", "distance_meters"]
             )
             writer.writeheader()
 
@@ -135,7 +135,7 @@ def signin():
         with open(DATA_FILE, "a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(
                 f,
-                fieldnames=["staff_id", "staff_name", "date", "time", "status", "distance_meters"]
+                fieldnames=["staff_id", "staff_name", "date", "time", "status", "ip", "distance_meters"]
             )
             writer.writerow({
                 "staff_id": staff_id,
@@ -143,6 +143,7 @@ def signin():
                 "date": today,
                 "time": current_time_str,
                 "status": "ON TIME" if now.time() <= ONTIME_END_TIME else "LATE",
+                "ip": user_ip,
                 "distance_meters": round(distance, 2)
             })
 
