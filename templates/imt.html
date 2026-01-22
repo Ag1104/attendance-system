@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>IMT Attendance Dashboard</title>
+<style>
+body {
+  font-family: "Segoe UI", sans-serif;
+  background: #f3f4f6;
+  padding: 30px;
+}
+
+h1 {
+  color: #92400e;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+}
+
+th, td {
+  padding: 10px;
+  border-bottom: 1px solid #ddd;
+  text-align: center;
+}
+
+th {
+  background: #f59e0b;
+  color: white;
+}
+
+tr:hover {
+  background: #fef3c7;
+}
+
+.late {
+  color: red;
+  font-weight: bold;
+}
+
+.ontime {
+  color: green;
+  font-weight: bold;
+}
+</style>
+</head>
+
+<body>
+<h1>Internal Monitoring Team Attendance Dashboard</h1>
+<a href="/imt/logout" style="float:right">Logout</a>
+
+<table>
+<tr>
+  <th>Staff ID</th>
+  <th>Date</th>
+  <th>Time</th>
+  <th>Status</th>
+  <th>IP</th>
+  <th>Distance (m)</th>
+</tr>
+
+{% for r in records %}
+<tr>
+  <td>{{ r.staff_id }}</td>
+  <td>{{ r.date }}</td>
+  <td>{{ r.time }}</td>
+  <td class="{{ 'late' if r.status == 'LATE' else 'ontime' }}">
+    {{ r.status }}
+  </td>
+  <td>{{ r.ip }}</td>
+  <td>{{ r.distance_meters }}</td>
+</tr>
+{% endfor %}
+</table>
+
+<br>
+<a href="/download_csv">⬇ Download CSV</a>
+
+</body>
+</html>
