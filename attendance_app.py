@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, send_file
 from datetime import datetime, date, time
 import csv
 import os
@@ -59,6 +59,15 @@ def get_user_ip():
 def index():
     ensure_csv()
     return render_template("index.html")
+
+@app.route("/download_csv")
+def download_csv():
+    ensure_csv()
+    return send_file(
+        DATA_FILE,
+        as_attachment=True,
+        download_name="attendance.csv"
+    )
 
 @app.route("/staff")
 def staff_list():
@@ -130,3 +139,4 @@ def signin():
 # ---------------- RUN ----------------
 if __name__ == "__main__":
     app.run()
+
